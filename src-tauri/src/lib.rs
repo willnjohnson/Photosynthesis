@@ -64,14 +64,25 @@ fn get_db_path(app: &tauri::AppHandle) -> String {
         return path.clone();
     }
 
-    // Use Kinesis DB (shared with Kinesis app)
-    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
-    let kinesis_appdata = PathBuf::from(&appdata).join("kinesisapp");
-    let kinesis_conf_path = kinesis_appdata.join("init.conf");
+    // Determine base directory for Kinesis data depending on OS
+    #[cfg(target_os = "windows")]
+    let base_dir = {
+        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(&appdata).join("kinesisapp")
+    };
+    #[cfg(not(target_os = "windows"))]
+    let base_dir = {
+        // Use XDG spec, fallback to $HOME/.local/share
+        let xdg = std::env::var("XDG_DATA_HOME").ok();
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let dir = xdg.map(PathBuf::from).unwrap_or_else(|| PathBuf::from(home).join(".local/share"));
+        dir.join("kinesisapp")
+    };
 
-    let mut db_full_path = kinesis_appdata.join("kinesis_data.db");
+    let kinesis_conf_path = base_dir.join("init.conf");
+    let mut db_full_path = base_dir.join("kinesis_data.db");
 
-    // Check Kinesis init.conf for db_path override
+    // Check init.conf for custom db_path override
     if kinesis_conf_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&kinesis_conf_path) {
             for line in content.lines() {
