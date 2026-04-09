@@ -1,0 +1,217 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+    font-family: "Roboto", "Inter", system-ui, -apple-system, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+
+    color-scheme: dark;
+    color: #ffffff;
+    background-color: #0f0f0f;
+
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Light mode styles - apply when .dark class is NOT present */
+:root:not(.dark) {
+    background-color: #f1f1f1;
+    color: #0f0f0f;
+}
+
+:root:not(.dark) body {
+    background-color: #f1f1f1;
+    color: #0f0f0f;
+}
+
+/* Backgrounds */
+:root:not(.dark) .bg-\[\#0f0f0f\] { background-color: #ffffff !important; }
+:root:not(.dark) .bg-\[\#121212\] { background-color: #f5f5f5 !important; }
+:root:not(.dark) .bg-\[\#272727\] { background-color: #e8e8e8 !important; }
+:root:not(.dark) .bg-\[\#202020\] { background-color: #e5e5e5 !important; }
+:root:not(.dark) .bg-\[\#3f3f3f\] { background-color: #d5d5d5 !important; }
+:root:not(.dark) .bg-white { background-color: #ffffff !important; }
+:root:not(.dark) .bg-black\/80 { background-color: rgba(0, 0, 0, 0.3) !important; }
+:root:not(.dark) .bg-black\/40 { background-color: rgba(0, 0, 0, 0.1) !important; }
+:root:not(.dark) .bg-black\/20 { background-color: #f5f5f5 !important; }
+:root:not(.dark) .bg-black { background-color: #000000 !important; }
+:root:not(.dark) .bg-gray-900\/50 { background-color: #e8e8e8 !important; }
+:root:not(.dark) .bg-gray-800 { background-color: #d5d5d5 !important; }
+
+/* Text colors */
+:root:not(.dark) .text-white { color: #0f0f0f !important; }
+:root:not(.dark) .text-\[\#aaaaaa\] { color: #666666 !important; }
+:root:not(.dark) .text-\[\#888888\] { color: #555555 !important; }
+:root:not(.dark) .text-gray-400 { color: #666666 !important; }
+:root:not(.dark) .text-gray-300 { color: #555555 !important; }
+:root:not(.dark) .text-gray-500 { color: #666666 !important; }
+:root:not(.dark) .text-gray-600 { color: #666666 !important; }
+:root:not(.dark) .text-gray-700 { color: #555555 !important; }
+:root:not(.dark) .text-gray-800 { color: #333333 !important; }
+:root:not(.dark) .text-gray-900 { color: #222222 !important; }
+:root:not(.dark) .text-black { color: #0f0f0f !important; }
+
+/* Border colors */
+:root:not(.dark) .border-\[\#303030\] { border-color: #d0d0d0 !important; }
+:root:not(.dark) .border-\[\#505050\] { border-color: #aaaaaa !important; }
+:root:not(.dark) .border-red-600 { border-color: #cc0000 !important; }
+:root:not(.dark) .border-gray-700 { border-color: #bbbbbb !important; }
+:root:not(.dark) .border-gray-800 { border-color: #aaaaaa !important; }
+
+/* Hover states */
+:root:not(.dark) .hover\:bg-\[\#3f3f3f\]:hover { background-color: #d5d5d5 !important; }
+:root:not(.dark) .hover\:border-\[\#505050\]:hover { border-color: #999999 !important; }
+:root:not(.dark) .hover\:bg-\[\#e5e5e5\]:hover { background-color: #dddddd !important; }
+:root:not(.dark) .hover\:text-white:hover { color: #0f0f0f !important; }
+:root:not(.dark) .hover\:bg-\[\#333333\]:hover { background-color: #d0d0d0 !important; }
+:root:not(.dark) .hover\:bg-gray-700:hover { background-color: #cccccc !important; }
+:root:not(.dark) .hover\:bg-\[\#e5e5e5\]:hover { background-color: #d5d5d5 !important; }
+
+/* Gradient buttons - always white text */
+:root:not(.dark) .summarize-btn { color: #ffffff !important; }
+:root:not(.dark) .summarize-btn svg { color: #ffffff !important; }
+
+/* Input fields */
+:root:not(.dark) input,
+:root:not(.dark) select {
+    background-color: #f5f5f5 !important;
+    color: #0f0f0f !important;
+    border-color: #cccccc !important;
+}
+
+/* Code blocks */
+:root:not(.dark) code {
+    background-color: #f0f0f0 !important;
+    color: #333333 !important;
+}
+
+/* Scrollbar */
+:root:not(.dark) ::-webkit-scrollbar-thumb {
+    background: #cccccc;
+    border: 4px solid #f1f1f1;
+}
+:root:not(.dark) ::-webkit-scrollbar-thumb:hover {
+    background: #999999;
+}
+
+/* ==================== */
+/* Component-specific light mode fixes */
+/* ==================== */
+
+/* SettingsModal - tabs */
+:root:not(.dark) .bg-\[\#303030\] { background-color: #e0e0e0 !important; }
+:root:not(.dark) .hover\:bg-\[\#202020\]:hover { background-color: #d5d5d5 !important; }
+
+/* SearchBar - tooltip */
+:root:not(.dark) .bg-\[\#1a1a1a\] { background-color: #f0f0f0 !important; }
+:root:not(.dark) .border-\[\#333\] { border-color: #cccccc !important; }
+:root:not(.dark) .text-gray-200 { color: #333333 !important; }
+:root:not(.dark) .text-gray-300 { color: #444444 !important; }
+:root:not(.dark) .text-gray-500 { color: #666666 !important; }
+
+/* Lightbulb icon - dark gold on hover */
+:root:not(.dark) .hover\:text-yellow-400:hover { color: #b8860b !important; }
+
+/* Sidebar - divider */
+:root:not(.dark) .hover\:bg-\[\#272727\]:hover { background-color: #bbbbbb !important; }
+
+/* Sidebar - video background */
+:root:not(.dark) .bg-black\/20 { background-color: #f5f5f5 !important; }
+
+/* Sidebar - transcript background */
+:root:not(.dark) .bg-\[\#121212\] { background-color: #f5f5f5 !important; }
+
+/* Sidebar - transcript text */
+:root:not(.dark) .text-gray-300 { color: #333333 !important; }
+
+/* Sidebar - markdown content */
+:root:not(.dark) .prose { color: #333333 !important; }
+:root:not(.dark) .prose h1 { color: #111111 !important; }
+:root:not(.dark) .prose h2 { color: #222222 !important; }
+:root:not(.dark) .prose h3 { color: #333333 !important; }
+:root:not(.dark) .prose strong { color: #111111 !important; }
+:root:not(.dark) .prose code { color: #333333 !important; }
+:root:not(.dark) .prose blockquote { border-left-color: #ccc !important; color: #555 !important; font-style: italic !important; }
+:root:not(.dark) .prose blockquote p { color: #555 !important; }
+
+/* Reduce markdown spacing */
+.prose p { margin-top: 0.25rem !important; margin-bottom: 0.25rem !important; }
+.prose ul { margin-top: 0.25rem !important; margin-bottom: 0.25rem !important; }
+.prose li { margin-top: 0.1rem !important; margin-bottom: 0.1rem !important; }
+.prose h1, .prose h2, .prose h3 { margin-top: 0.5rem !important; margin-bottom: 0.25rem !important; }
+.prose ul li, .prose ol li { padding-top: 0 !important; padding-bottom: 0 !important; }
+
+/* Table styling for markdown */
+.prose table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin-top: 1rem !important;
+    margin-bottom: 1rem !important;
+    font-size: 0.85rem !important;
+    line-height: normal !important;
+}
+.prose th, .prose td {
+    border: 1px solid #444 !important;
+    padding: 0.5rem !important;
+    text-align: left !important;
+}
+.prose th {
+    background-color: #2a2a2a !important;
+    color: #fff !important;
+    font-weight: 700 !important;
+}
+:root:not(.dark) .prose th { background-color: #e0e0e0 !important; color: #111 !important; border-color: #ccc !important; }
+:root:not(.dark) .prose td { border-color: #ccc !important; }
+
+/* Sidebar - Save to Library button */
+:root:not(.dark) .bg-white.text-black { background-color: #333333 !important; color: #ffffff !important; }
+:root:not(.dark) .bg-white.text-black:hover { background-color: #444444 !important; }
+
+/* Sidebar - Delete button */
+:root:not(.dark) .bg-red-900\/10 { background-color: #ffebee !important; }
+:root:not(.dark) .text-red-500 { color: #cc0000 !important; }
+:root:not(.dark) .hover\:bg-red-900\/20:hover { background-color: #ffcdd2 !important; }
+
+/* Active viewMode button */
+:root:not(.dark) .bg-white.text-black { background-color: #333333 !important; color: #ffffff !important; }
+
+body {
+    margin: 0;
+    background-color: #0f0f0f;
+    color: white;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 20px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #717171;
+    border-radius: 10px;
+    border: 4px solid #0f0f0f;
+    min-height: 40px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #aaaaaa;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+    width: 16px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #3f3f3f;
+    border: 3px solid #0f0f0f;
+    min-height: 40px;
+}
