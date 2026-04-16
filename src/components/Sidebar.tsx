@@ -1,8 +1,20 @@
 import { X, FileText, Sparkles, Image as ImageIcon, Loader2, Upload, Search, Save } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { invoke } from "@tauri-apps/api/core";
+
+function useAutoResizeTextarea(containerRef: React.RefObject<HTMLElement | null>, minHeight: number) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    const container = containerRef.current;
+    if (!textarea || !container) return;
+  }, [containerRef, minHeight]);
+
+  return { textareaRef };
+}
 
 interface PixabayImage {
   id: number;
@@ -38,6 +50,7 @@ interface SidebarProps {
   onSaveSummary: (newSummary: string) => void;
   onImageAddedToSummary?: () => void;
   onUpdateSummary: (newSummary: string) => void;
+  onUpdateTranscript?: (newTranscript: string) => void;
   youtubeUrl?: string;
 }
 
@@ -56,8 +69,10 @@ export function Sidebar({
   onSaveSummary,
   onImageAddedToSummary,
   onUpdateSummary,
+  onUpdateTranscript,
 }: SidebarProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [isEditingTranscript, setIsEditingTranscript] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [imageTab, setImageTab] = useState<"venice" | "pixabay">("venice");
   const [lexicaQuery, setLexicaQuery] = useState("");
@@ -72,13 +87,39 @@ export function Sidebar({
   const [imageHover, setImageHover] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  const [promptSource, setPromptSource] = useState<"transcript" | "url">("transcript");
+  const imageToolsRef = useRef<HTMLDivElement>(null);
+  const [promptSource, setPromptSource] = useState<"transcript" | "summary">("transcript");
+  const [showSmartReplace, setShowSmartReplace] = useState(false);
+  const [smartReplaceSrc, setSmartReplaceSrc] = useState("");
+  const [smartReplaceDest, setSmartReplaceDest] = useState("");
+  const [editHistory, setEditHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+
+  const transcriptTextarea = useAutoResizeTextarea(contentRef, 150);
+  const summaryTextarea = useAutoResizeTextarea(contentRef, 150);
+  const imagePromptTextarea = useAutoResizeTextarea(imageToolsRef, 120);
 
   useEffect(() => {
     if (contentRef.current && isOpen) {
       contentRef.current.scrollTop = 0;
     }
   }, [video?.video_id, isOpen]);
+
+  const handleClickOutside = useCallback((e: MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (showSmartReplace && !target.closest('.smart-replace-dropdown') && !target.closest('.smart-replace-btn')) {
+      setShowSmartReplace(false);
+      setSmartReplaceSrc("");
+      setSmartReplaceDest("");
+    }
+  }, [showSmartReplace]);
+
+  useEffect(() => {
+    if (showSmartReplace) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [showSmartReplace, handleClickOutside]);
 
   const handleDeleteImage = (src: string) => {
     if (!video?.summary) return;
@@ -102,6 +143,27 @@ export function Sidebar({
     }
   };
 
+  const handleEditTranscript = () => {
+    if (video?.transcript) {
+      setEditContent(video.transcript);
+      setEditHistory([video.transcript]);
+      setHistoryIndex(0);
+      setIsEditingTranscript(true);
+    }
+  };
+
+  const handleSaveTranscript = () => {
+    onUpdateTranscript?.(editContent);
+    setIsEditingTranscript(false);
+  };
+
+  const handleCancelTranscript = () => {
+    setIsEditingTranscript(false);
+    setEditContent("");
+    setEditHistory([]);
+    setHistoryIndex(-1);
+  };
+
   const handleSave = () => {
     onSaveSummary(editContent);
     setIsEditing(false);
@@ -112,11 +174,83 @@ export function Sidebar({
     setEditContent("");
   };
 
+  const pushToHistory = (content: string) => {
+    setEditHistory(prev => {
+      if (prev[prev.length - 1] === content) return prev;
+      return [...prev.slice(0, historyIndex + 1), content];
+    });
+    setHistoryIndex(prev => prev + 1);
+  };
+
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleTypingChange = (value: string) => {
+    setEditContent(value);
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    typingTimeoutRef.current = setTimeout(() => {
+      pushToHistory(value);
+    }, 500);
+  };
+
+  const clearTypingTimeout = () => {
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+  };
+
+  const handleSmartReplace = () => {
+    if (!smartReplaceSrc.trim() || !isEditingTranscript) return;
+    pushToHistory(editContent);
+    const escaped = smartReplaceSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(?<![a-zA-Z])${escaped}(?![a-zA-Z])`, 'gi');
+    const newContent = editContent.replace(pattern, smartReplaceDest);
+    const textarea = transcriptTextarea.textareaRef.current;
+    const scrollTop = textarea?.scrollTop;
+    setEditContent(newContent);
+    setShowSmartReplace(false);
+    setSmartReplaceSrc("");
+    setSmartReplaceDest("");
+    if (textarea) {
+      requestAnimationFrame(() => {
+        textarea.focus();
+        textarea.scrollTop = scrollTop ?? 0;
+      });
+    }
+  };
+
+  const handleUndo = () => {
+    if (historyIndex > 0) {
+      setHistoryIndex(prev => prev - 1);
+      setEditContent(editHistory[historyIndex - 1]);
+    }
+  };
+
+  const handleRedo = () => {
+    if (historyIndex < editHistory.length - 1) {
+      setHistoryIndex(prev => prev + 1);
+      setEditContent(editHistory[historyIndex + 1]);
+    }
+  };
+
+  const handleCancelSmartReplace = () => {
+    setShowSmartReplace(false);
+    setSmartReplaceSrc("");
+    setSmartReplaceDest("");
+  };
+
   const handleTabChange = (tab: "transcript" | "summary") => {
     if (isEditing) {
       setIsEditing(false);
       setEditContent("");
     }
+    if (isEditingTranscript) {
+      setIsEditingTranscript(false);
+      setEditContent("");
+    }
+
     onTabChange(tab);
   };
 
@@ -138,11 +272,19 @@ export function Sidebar({
 
   const handleAddPixabayImage = async (image: PixabayImage) => {
     if (!video?.summary) return;
-    const tags = image.tags.split(", ").slice(0, 3).join(", ");
-    const imageMarkdown = `![${tags}](${image.url} "${tags}")`;
-    const newContent = `${imageMarkdown}\n\n${video.summary}`;
-    onSaveSummary(newContent);
-    onImageAddedToSummary?.();
+    setIsUploadingImage(true);
+    try {
+      const imgurUrl = await invoke<string>("upload_to_imgur", { imageUrl: image.thumbnail });
+      const tags = image.tags.split(", ").slice(0, 3).join(", ");
+      const imageMarkdown = `![${tags}](${imgurUrl} "${tags}")`;
+      const newContent = `${imageMarkdown}\n\n${video.summary}`;
+      onSaveSummary(newContent);
+      onImageAddedToSummary?.();
+    } catch (err) {
+      console.error("Failed to upload image to Imgur:", err);
+    } finally {
+      setIsUploadingImage(false);
+    }
   };
 
   const handleSavePixabayApiKey = async () => {
@@ -224,7 +366,7 @@ export function Sidebar({
       )}
 
       <div
-        className={`fixed inset-y-0 right-0 w-[1400px] max-w-full bg-[#0f0f0f] border-l border-[#303030] transform transition-transform duration-300 ease-in-out z-50 shadow-2xl ${
+        className={`fixed inset-y-0 right-0 w-[1400px] max-w-full bg-[#0f0f0f] border-l border-[#303030] transform transition-transform duration-300 ease-in-out z-50 ${
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
@@ -296,6 +438,14 @@ export function Sidebar({
                     Markdown Editor
                   </button>
                 )}
+                {activeTab === "transcript" && video?.transcript && !isEditingTranscript && (
+                  <button
+                    onClick={handleEditTranscript}
+                    className="px-2 py-1 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-xs font-semibold transition-colors"
+                  >
+                    Editor
+                  </button>
+                )}
                 {isEditing && (
                   <div className="flex items-center gap-2">
                     <button
@@ -306,7 +456,62 @@ export function Sidebar({
                     </button>
                     <button
                       onClick={handleSave}
-                      className="px-2 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white transition-all text-xs font-bold cursor-pointer shadow-lg shadow-red-900/10"
+                      className="px-2 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white transition-all text-xs font-bold cursor-pointer"
+                    >
+                      Save
+                    </button>
+                  </div>
+                )}
+                {isEditingTranscript && (
+                  <div className="relative flex items-center gap-2">
+                    <button
+                      onClick={() => setShowSmartReplace(!showSmartReplace)}
+                      className="smart-replace-btn px-2 py-1 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-xs font-semibold transition-colors"
+                    >
+                      Find All & Replace
+                    </button>
+                    {showSmartReplace && (
+                      <div className="absolute top-full left-0 mt-1 bg-[#1a1a1a] border border-[#383838] rounded-lg p-3 flex flex-col gap-2 z-50 smart-replace-dropdown">
+                        <input
+                          type="text"
+                          placeholder="Find text..."
+                          value={smartReplaceSrc}
+                          onChange={(e) => setSmartReplaceSrc(e.target.value)}
+                          className="w-40 bg-[#222222] border border-[#383838] rounded-lg px-3 py-1.5 text-xs text-white placeholder-[#666666] focus:outline-none focus:border-red-500"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Replace with..."
+                          value={smartReplaceDest}
+                          onChange={(e) => setSmartReplaceDest(e.target.value)}
+                          className="w-40 bg-[#222222] border border-[#383838] rounded-lg px-3 py-1.5 text-xs text-white placeholder-[#666666] focus:outline-none focus:border-red-500"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleSmartReplace}
+                            disabled={!smartReplaceSrc.trim()}
+                            className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-30 text-white text-xs font-bold transition-all cursor-pointer"
+                          >
+                            Replace
+                          </button>
+                          <button
+                            onClick={handleCancelSmartReplace}
+                            className="px-3 py-1 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-xs font-semibold transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <button
+                      onClick={handleCancelTranscript}
+                      className="px-2 py-1 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-xs font-semibold transition-colors ml-2"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveTranscript}
+                      className="px-2 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white transition-all text-xs font-bold cursor-pointer"
                     >
                       Save
                     </button>
@@ -314,24 +519,51 @@ export function Sidebar({
                 )}
               </div>
 
-              <div className="text-gray-300 whitespace-pre-wrap">
+              <div className="text-gray-300 leading-relaxed prose prose-invert prose-sm max-w-none">
                 {activeTab === "transcript" ? (
-                  video.transcript ? (
+                  isEditingTranscript ? (
+                    <textarea
+                      ref={transcriptTextarea.textareaRef}
+                      value={editContent}
+                      onChange={(e) => handleTypingChange(e.target.value)}
+                      onKeyDown={(e) => {
+                        if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+                          e.preventDefault();
+                          clearTypingTimeout();
+                          handleUndo();
+                        } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+                          e.preventDefault();
+                          clearTypingTimeout();
+                          handleRedo();
+                        }
+                      }}
+                      className="w-full min-h-[350px] h-[calc(100vh-220px)] bg-[#1a1a1a] border border-[#383838] rounded-lg p-4 text-sm text-white placeholder-[#666666] focus:outline-none focus:border-red-500 font-mono resize-none"
+                      placeholder="Edit transcript..."
+                    />
+                  ) : video.transcript ? (
                     video.transcript
                   ) : (
                     <p className="text-gray-600">No transcript available</p>
                   )
                 ) : isEditing ? (
                   <textarea
+                    ref={summaryTextarea.textareaRef}
                     value={editContent}
                     onChange={(e) => setEditContent(e.target.value)}
-                    className="w-full h-[400px] bg-[#1a1a1a] border border-[#383838] rounded-lg p-4 text-sm text-white placeholder-[#666666] focus:outline-none focus:border-red-500 font-mono resize-none"
+                    className="w-full min-h-[350px] h-[calc(100vh-220px)] bg-[#1a1a1a] border border-[#383838] rounded-lg p-4 text-sm text-white placeholder-[#666666] focus:outline-none focus:border-red-500 font-mono resize-none"
                     placeholder="Edit summary..."
                   />
                 ) : video.summary ? (
                   <ReactMarkdown 
                     remarkPlugins={[remarkGfm]}
                     components={{
+                      a: ({ node, ...props }) => (
+                        <a
+                          {...props}
+                          href="#"
+                          className="text-red-500 hover:text-red-400 underline decoration-red-500/30 underline-offset-4"
+                        />
+                      ),
                       img: ({ node, ...props }) => {
                         console.log('img props:', props);
                         const src = props.src || '';
@@ -352,7 +584,7 @@ export function Sidebar({
                                   e.stopPropagation();
                                   handleDeleteImage(src);
                                 }}
-                                className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 rounded-full flex items-center justify-center text-white hover:bg-red-500 shadow-lg z-10 cursor-pointer"
+                                className="absolute top-2 -right-2 w-6 h-6 bg-red-600 rounded-full flex items-center justify-center text-white hover:bg-red-500 z-10 cursor-pointer"
                               >
                                 <X className="w-4 h-4" />
                               </button>
@@ -371,7 +603,7 @@ export function Sidebar({
             </div>
 
             {/* Right Side: Image Generation / Search */}
-            <div className="w-[450px] flex flex-col bg-[#141414]">
+            <div ref={imageToolsRef} className="w-[450px] flex flex-col bg-[#141414]">
               {/* Tab Header */}
               <div className="px-4 py-3 border-b border-[#303030]">
                 <div className="flex gap-2">
@@ -380,7 +612,7 @@ export function Sidebar({
                     className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer px-3 py-1.5 rounded-lg ${
                       imageTab === "venice"
                         ? "bg-red-600 text-white"
-                        : "bg-[#222222] text-[#888888] hover:text-white"
+                        : "bg-[#222222] text-[#888888] hover:text-white border border-[#383838]"
                     }`}
                   >
                     <ImageIcon className="w-3 h-3" />
@@ -391,7 +623,7 @@ export function Sidebar({
                     className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer px-3 py-1.5 rounded-lg ${
                       imageTab === "pixabay"
                         ? "bg-blue-600 text-white"
-                        : "bg-[#222222] text-[#888888] hover:text-white"
+                        : "bg-[#222222] text-[#888888] hover:text-white border border-[#383838]"
                     }`}
                   >
                     <Search className="w-3 h-3" />
@@ -450,7 +682,10 @@ export function Sidebar({
                       <div className="flex items-center gap-2 mb-2">
                         <span className="text-xs text-[#888888]">Use:</span>
                         <button
-                          onClick={() => setPromptSource("transcript")}
+                          onClick={() => {
+                            setPromptSource("transcript");
+                            onImagePromptChange("");
+                          }}
                           className={`px-2 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                             promptSource === "transcript"
                               ? "bg-red-600 text-white"
@@ -460,23 +695,28 @@ export function Sidebar({
                           Transcript
                         </button>
                         <button
-                          onClick={() => setPromptSource("url")}
+                          onClick={() => {
+                            setPromptSource("summary");
+                            onImagePromptChange("");
+                          }}
                           className={`px-2 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                            promptSource === "url"
+                            promptSource === "summary"
                               ? "bg-red-600 text-white"
                               : "bg-[#222222] border border-[#383838] text-[#888888] hover:text-white"
                           }`}
                         >
-                          YouTube URL
+                          AI Summary
                         </button>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <button
                           onClick={() => {
                             const content = promptSource === "transcript" 
-                              ? (video.transcript || "") 
-                              : `https://www.youtube.com/watch?v=${video.video_id}`;
-                            onImagePromptChange(`Infographic based on ${promptSource === "transcript" ? "this transcript" : "this video"}:\n\n${content}`);
+                              ? (video.transcript || "")
+                              : promptSource === "summary"
+                                ? (video.summary || "")
+                                : "";
+                            onImagePromptChange(`Infographic based on ${promptSource === "transcript" ? "this transcript" : "this AI summary"}:\n\n${content}`);
                           }}
                           className="px-2 py-1 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-xs font-semibold transition-colors"
                         >
@@ -485,9 +725,11 @@ export function Sidebar({
                         <button
                           onClick={() => {
                             const content = promptSource === "transcript" 
-                              ? (video.transcript || "") 
-                              : `https://www.youtube.com/watch?v=${video.video_id}`;
-                            onImagePromptChange(`Visual Summary Poster based on ${promptSource === "transcript" ? "this transcript" : "this video"}:\n\n${content}`);
+                              ? (video.transcript || "")
+                              : promptSource === "summary"
+                                ? (video.summary || "")
+                                : "";
+                            onImagePromptChange(`Visual Summary Poster based on ${promptSource === "transcript" ? "this transcript" : "this AI summary"}:\n\n${content}`);
                           }}
                           className="px-2 py-1 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-xs font-semibold transition-colors"
                         >
@@ -496,9 +738,11 @@ export function Sidebar({
                         <button
                           onClick={() => {
                             const content = promptSource === "transcript" 
-                              ? (video.transcript || "") 
-                              : `https://www.youtube.com/watch?v=${video.video_id}`;
-                            onImagePromptChange(`Concept Art based on ${promptSource === "transcript" ? "this transcript" : "this video"}:\n\n${content}`);
+                              ? (video.transcript || "")
+                              : promptSource === "summary"
+                                ? (video.summary || "")
+                                : "";
+                            onImagePromptChange(`Concept Art based on ${promptSource === "transcript" ? "this transcript" : "this AI summary"}:\n\n${content}`);
                           }}
                           className="px-2 py-1 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-xs font-semibold transition-colors"
                         >
@@ -507,9 +751,11 @@ export function Sidebar({
                         <button
                           onClick={() => {
                             const content = promptSource === "transcript" 
-                              ? (video.transcript || "") 
-                              : `https://www.youtube.com/watch?v=${video.video_id}`;
-                            onImagePromptChange(`Scene Illustration based on ${promptSource === "transcript" ? "this transcript" : "this video"}:\n\n${content}`);
+                              ? (video.transcript || "")
+                              : promptSource === "summary"
+                                ? (video.summary || "")
+                                : "";
+                            onImagePromptChange(`Scene Illustration based on ${promptSource === "transcript" ? "this transcript" : "this AI summary"}:\n\n${content}`);
                           }}
                           className="px-2 py-1 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-xs font-semibold transition-colors"
                         >
@@ -518,9 +764,11 @@ export function Sidebar({
                         <button
                           onClick={() => {
                             const content = promptSource === "transcript" 
-                              ? (video.transcript || "") 
-                              : `https://www.youtube.com/watch?v=${video.video_id}`;
-                            onImagePromptChange(`Data Visualization based on ${promptSource === "transcript" ? "this transcript" : "this video"}:\n\n${content}`);
+                              ? (video.transcript || "")
+                              : promptSource === "summary"
+                                ? (video.summary || "")
+                                : "";
+                            onImagePromptChange(`Data Visualization based on ${promptSource === "transcript" ? "this transcript" : "this AI summary"}:\n\n${content}`);
                           }}
                           className="px-2 py-1 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-xs font-semibold transition-colors"
                         >
@@ -529,9 +777,11 @@ export function Sidebar({
                         <button
                           onClick={() => {
                             const content = promptSource === "transcript" 
-                              ? (video.transcript || "") 
-                              : `https://www.youtube.com/watch?v=${video.video_id}`;
-                            onImagePromptChange(`Flowchart based on ${promptSource === "transcript" ? "this transcript" : "this video"}:\n\n${content}`);
+                              ? (video.transcript || "")
+                              : promptSource === "summary"
+                                ? (video.summary || "")
+                                : "";
+                            onImagePromptChange(`Flowchart based on ${promptSource === "transcript" ? "this transcript" : "this AI summary"}:\n\n${content}`);
                           }}
                           className="px-2 py-1 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-xs font-semibold transition-colors"
                         >
@@ -540,9 +790,11 @@ export function Sidebar({
                         <button
                           onClick={() => {
                             const content = promptSource === "transcript" 
-                              ? (video.transcript || "") 
-                              : `https://www.youtube.com/watch?v=${video.video_id}`;
-                            onImagePromptChange(`Whiteboard Illustration based on ${promptSource === "transcript" ? "this transcript" : "this video"}:\n\n${content}`);
+                              ? (video.transcript || "")
+                              : promptSource === "summary"
+                                ? (video.summary || "")
+                                : "";
+                            onImagePromptChange(`Whiteboard Illustration based on ${promptSource === "transcript" ? "this transcript" : "this AI summary"}:\n\n${content}`);
                           }}
                           className="px-2 py-1 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-xs font-semibold transition-colors"
                         >
@@ -550,11 +802,11 @@ export function Sidebar({
                         </button>
                       </div>
                         <textarea
+                          ref={imagePromptTextarea.textareaRef}
                           placeholder="Enter image prompt..."
                           value={imagePrompt}
                           onChange={(e) => onImagePromptChange(e.target.value)}
-                          rows={4}
-                          className="w-full bg-[#222222] border border-[#383838] rounded-lg px-4 py-2 text-sm text-white placeholder-[#666666] focus:outline-none focus:border-red-500 resize-none"
+                          className="w-full min-h-[120px] h-[calc(100vh-420px)] bg-[#222222] border border-[#383838] rounded-lg px-4 py-2 text-sm text-white placeholder-[#666666] focus:outline-none focus:border-red-500 resize-none"
                         />
                       <div className="flex gap-2 mt-2">
                         <button
@@ -604,7 +856,7 @@ export function Sidebar({
                                 className="relative group rounded-lg overflow-hidden cursor-pointer inline-block"
                               >
                                 <img src={generatedImage} alt="Image" className="rounded-lg" />
-                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
                                   <Upload className="w-6 h-6 text-white" />
                                 </div>
                               </button>
@@ -712,7 +964,7 @@ export function Sidebar({
                               alt={image.tags}
                               className="w-full h-20 object-cover"
                             />
-                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
                               <Upload className="w-4 h-4 text-white" />
                             </div>
                           </button>

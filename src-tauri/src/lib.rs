@@ -21,6 +21,7 @@ pub struct Video {
     pub date_added: Option<String>,
     pub thumbnail: String,
     pub status: Option<String>,
+    pub tags: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -114,8 +115,97 @@ fn rust_get_setting(db_path: &str, key: &str) -> Option<String> {
 fn ensure_db_exists(db_path: &str) -> Result<(), String> {
     let path = PathBuf::from(db_path);
     if !path.exists() {
-        return Err(format!("Database not found at: {}", db_path));
+        init_db(db_path)?;
+    } else {
+        migrate_db(db_path)?;
     }
+    Ok(())
+}
+
+fn migrate_db(db_path: &str) -> Result<(), String> {
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    
+    let table_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='settings'",
+        [],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+
+    if table_count == 0 {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )",
+            [],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    let table_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='glossary'",
+        [],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+
+    if table_count == 0 {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS glossary (
+                term TEXT PRIMARY KEY,
+                definition TEXT NOT NULL
+            )",
+            [],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn init_db(db_path: &str) -> Result<(), String> {
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS videos (
+            video_id     TEXT PRIMARY KEY,
+            title        TEXT,
+            author       TEXT,
+            handle       TEXT,
+            length_seconds INTEGER,
+            transcript   TEXT,
+            summary      TEXT,
+            view_count   INTEGER DEFAULT 0,
+            video_type   TEXT DEFAULT 'standard',
+            published_at DATETIME,
+            date_added   DATETIME DEFAULT CURRENT_TIMESTAMP,
+            tags         TEXT DEFAULT ''
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
+
+    let has_tags: Result<i32, _> = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('videos') WHERE name='tags'",
+        [],
+        |row| row.get(0),
+    );
+    if has_tags.unwrap_or(0) == 0 {
+        let _ = conn.execute("ALTER TABLE videos ADD COLUMN tags TEXT DEFAULT ''", []);
+    }
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS glossary (
+            term TEXT PRIMARY KEY,
+            definition TEXT NOT NULL
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -128,7 +218,7 @@ fn get_all_videos(app: tauri::AppHandle) -> Result<Vec<Video>, String> {
     
     let mut stmt = conn.prepare(
         "SELECT video_id, title, author, handle, length_seconds, transcript, summary, 
-         view_count, video_type, published_at, date_added 
+         view_count, video_type, published_at, date_added, tags
          FROM videos 
          ORDER BY date_added DESC, rowid DESC"
     ).map_err(|e| e.to_string())?;
@@ -148,6 +238,7 @@ fn get_all_videos(app: tauri::AppHandle) -> Result<Vec<Video>, String> {
             date_added: row.get(10)?,
             thumbnail: format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", row.get::<_, String>(0)?),
             status: Some("saved".to_string()),
+            tags: row.get(11)?,
         })
     }).map_err(|e| e.to_string())?;
 
@@ -189,6 +280,7 @@ fn get_video_by_id(app: tauri::AppHandle, video_id: String) -> Result<Option<Vid
             date_added: row.get(10).map_err(|e| e.to_string())?,
             thumbnail: format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", row.get::<_, String>(0).map_err(|e| e.to_string())?),
             status: Some("saved".to_string()),
+            tags: row.get(11).map_err(|e| e.to_string())?,
         }))
     } else {
         Ok(None)
@@ -217,6 +309,19 @@ async fn update_summary(app: tauri::AppHandle, video_id: String, new_summary: St
     conn.execute(
         "UPDATE videos SET summary = ?1 WHERE video_id = ?2",
         params![new_summary, video_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn update_tags(app: tauri::AppHandle, video_id: String, new_tags: String) -> Result<(), String> {
+    let db_path = get_db_path(&app);
+    ensure_db_exists(&db_path)?;
+
+    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE videos SET tags = ?1 WHERE video_id = ?2",
+        params![new_tags, video_id],
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -585,6 +690,7 @@ pub fn run() {
             get_video_by_id,
             update_transcript,
             update_summary,
+            update_tags,
             get_venice_api_key,
             set_venice_api_key,
             generate_image,

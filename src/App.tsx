@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   X,
   FileText,
+  FileSpreadsheet,
   Sparkles,
   Filter,
   Lightbulb,
@@ -10,6 +11,8 @@ import {
   List,
   AtSign,
   Video,
+  ChevronUp,
+  Type
 } from "lucide-react";
 import "./index.css";
 import { Sidebar } from "./components/Sidebar";
@@ -29,6 +32,7 @@ interface Video {
   thumbnail: string;
   status: string | null;
   youtube_url: string | null;
+  tags: string | null;
 }
 
 interface DisplaySettings {
@@ -45,6 +49,20 @@ interface Facet {
 
 const DEFAULT_FILTER_FACET = [{ type: 'title_search', value: '' }];
 
+/**
+ * Normalizes text for searching by converting to lowercase and 
+ * standardizing punctuation characters (smart quotes, dashes, etc.)
+ */
+function normalizeText(text: string): string {
+    if (!text) return "";
+    return text
+        .toLowerCase()
+        .replace(/[‘’]/g, "'")
+        .replace(/[“”]/g, '"')
+        .replace(/…/g, "...")
+        .replace(/[—–]/g, "-");
+}
+
 function App() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -56,13 +74,20 @@ function App() {
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [videoListMode, setVideoListMode] = useState<'grid' | 'compact'>('grid');
-  const [summaryFilter, setSummaryFilter] = useState<'all' | 'with_summaries'>('all');
+  const [summaryFilter, setSummaryFilter] = useState<'all' | 'transcript_only' | 'with_summaries'>('all');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadVideos();
     loadDisplaySettings();
+  }, []);
+
+  useEffect(() => {
+    const onScroll = () => setShowScrollTop(window.scrollY > 400);
+    window.addEventListener("scroll", onScroll);
+    return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
   const loadDisplaySettings = async () => {
@@ -89,13 +114,20 @@ function App() {
   const handleInput = useCallback((val: string) => {
     const lowerVal = val.toLowerCase();
 
-    for (const prefix of ['title_search:', 'transcript_search:', 'handle:', 'video:']) {
+    for (const prefix of ['title_search:', 'transcript_search:', 'handle:', 'video:', 'tag_search:']) {
       if (lowerVal.includes(prefix)) {
         const afterFacet = val.toLowerCase().split(prefix)[1]?.trim() || "";
-        setFacets([{ type: prefix === 'title_search:' ? 'title_search' : prefix === 'transcript_search:' ? 'transcript_search' : prefix === 'handle:' ? 'handle' : 'video', value: '' }]);
+        setFacets([{ type: prefix === 'title_search:' ? 'title_search' : prefix === 'transcript_search:' ? 'transcript_search' : prefix === 'handle:' ? 'handle' : prefix === 'video:' ? 'video' : 'tag_search', value: '' }]);
         setSearchQuery(afterFacet);
         return;
       }
+    }
+
+    const tagMatch = val.match(/^#(.+?)#?$/);
+    if (tagMatch) {
+      setFacets([{ type: 'tag_search', value: '' }]);
+      setSearchQuery(tagMatch[1]);
+      return;
     }
 
     const handle = val.startsWith('@') ? val.substring(1) : null;
@@ -134,14 +166,47 @@ function App() {
     if (facets.length === 1) {
       setSearchQuery("");
     }
+    setFacetMenuIndex(null);
   };
+
+  const [facetMenuIndex, setFacetMenuIndex] = useState<number | null>(null);
+
+  const availableFacets = useMemo(() => [
+    { type: 'title_search' as const, label: 'Title' },
+    { type: 'transcript_search' as const, label: 'Transcript' },
+    { type: 'tag_search' as const, label: 'Tag' },
+    { type: 'handle' as const, label: 'Channel (@)' },
+    { type: 'video' as const, label: 'Video ID (>)' },
+  ], []);
+
+  const handleFacetChange = (index: number, newType: string) => {
+    const newFacets = [...facets];
+    newFacets[index] = { ...newFacets[index], type: newType as any };
+    setFacets(newFacets);
+    setFacetMenuIndex(null);
+  };
+
+  // Outside click for facet menu
+  useEffect(() => {
+    if (facetMenuIndex !== null) {
+      const handleClick = (e: MouseEvent) => {
+        const target = e.target as HTMLElement;
+        if (!target.closest('.facet-menu-container')) {
+          setFacetMenuIndex(null);
+        }
+      };
+      document.addEventListener('click', handleClick);
+      return () => document.removeEventListener('click', handleClick);
+    }
+  }, [facetMenuIndex]);
 
   const getFacetIcon = (type: string) => {
     switch (type) {
       case 'handle': return <AtSign className="w-3 h-3" />;
       case 'video': return <span className="text-xs font-bold">{'>'}</span>;
-      case 'transcript_search':
-      case 'title_search': return <Filter className="w-3 h-3" />;
+      case 'transcript_search': return <FileText className="w-3 h-3" />;
+      case 'title_search': return <Type className="w-3 h-3" />;
+      case 'tag_search': return <span className="text-xs font-bold">#</span>;
       default: return <Filter className="w-3 h-3" />;
     }
   };
@@ -155,43 +220,57 @@ function App() {
   };
 
   const filteredVideos = useMemo(() => {
-    const q = (searchQuery || "").toLowerCase();
+    const q = normalizeText(searchQuery || "");
     const textParts = q.split(' ').filter(Boolean);
     
     return videos.filter(v => {
       // Summary filter
       if (summaryFilter === 'with_summaries' && !v.summary) return false;
+      if (summaryFilter === 'transcript_only' && !!v.summary) return false;
 
       // Facet logic
       for (const f of facets) {
         if (f.type === 'handle') {
-          const fv = (f.value || searchQuery).toLowerCase();
+          const fv = normalizeText(f.value || searchQuery);
           if (fv === "") continue;
-          if (!v.handle?.toLowerCase().includes(fv) && !v.author?.toLowerCase().includes(fv)) return false;
+          if (!normalizeText(v.handle || "").includes(fv) && !normalizeText(v.author || "").includes(fv)) return false;
         } else if (f.type === 'title_search') {
-          const fv = (f.value || searchQuery).toLowerCase();
+          const fv = normalizeText(f.value || searchQuery);
           if (fv === "") continue;
           const terms = fv.split(' ').filter(Boolean);
           if (!terms.every(t => 
-            v.title.toLowerCase().includes(t) || 
-            v.author?.toLowerCase().includes(t) ||
-            v.handle?.toLowerCase().includes(t)
+            normalizeText(v.title).includes(t) || 
+            normalizeText(v.author || "").includes(t) ||
+            normalizeText(v.handle || "").includes(t)
           )) return false;
         } else if (f.type === 'transcript_search') {
-          const fv = (f.value || searchQuery).toLowerCase();
+          const fv = normalizeText(f.value || searchQuery);
           if (fv === "") continue;
-          if (!v.transcript?.toLowerCase().includes(fv)) return false;
+          if (!normalizeText(v.transcript || "").includes(fv)) return false;
         } else if (f.type === 'video') {
-          const fv = (f.value || searchQuery).toLowerCase();
+          const fv = normalizeText(f.value || searchQuery);
           if (fv === "") continue;
-          if (!v.video_id.toLowerCase().includes(fv)) return false;
+          if (!normalizeText(v.video_id).includes(fv)) return false;
+        } else if (f.type === 'tag_search') {
+          const fv = normalizeText(f.value || searchQuery).trim();
+          if (fv === "") continue;
+          if (!v.tags) return false;
+          const isExactMatch = fv.endsWith('#');
+          const tagQuery = isExactMatch ? fv.slice(0, -1) : fv;
+          const videoTags = v.tags.split(',').map(t => normalizeText(t.trim()));
+          if (isExactMatch) {
+            if (!videoTags.includes(tagQuery)) return false;
+          } else {
+            const searchTerms = tagQuery.split(' ').filter(Boolean);
+            if (!searchTerms.every(term => videoTags.some(tag => tag.includes(term)))) return false;
+          }
         }
       }
 
       // If we have any facet that ISN'T a global search, don't do the fallback global search
       const hasFacet = facets.some(f => f.type !== '');
       if (!hasFacet && textParts.length > 0) {
-        const searchTarget = `${v.title} ${v.author || ''} ${v.handle || ''} ${v.transcript || ''} ${v.summary || ''}`.toLowerCase();
+        const searchTarget = normalizeText(`${v.title} ${v.author || ''} ${v.handle || ''} ${v.transcript || ''} ${v.summary || ''}`);
         if (!textParts.every(t => searchTarget.includes(t))) return false;
       }
 
@@ -244,17 +323,17 @@ function App() {
     }
   };
 
-  const formatDuration = (seconds: number | null) => {
-    if (!seconds) return "0:00";
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    if (mins >= 60) {
-      const hours = Math.floor(mins / 60);
-      const remainMins = mins % 60;
-      return `${hours}:${remainMins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  const handleUpdateTranscript = async (newTranscript: string) => {
+    if (!selectedVideo) return;
+    try {
+      await invoke("update_transcript", { videoId: selectedVideo.video_id, newTranscript });
+      setSelectedVideo({ ...selectedVideo, transcript: newTranscript });
+      setVideos(videos.map(v => v.video_id === selectedVideo.video_id ? { ...v, transcript: newTranscript } : v));
+    } catch (err) {
+      console.error("Failed to update transcript:", err);
     }
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
+
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return "";
@@ -313,9 +392,15 @@ function App() {
               <div className="relative flex-1">
                 <div className="flex flex-wrap items-center bg-[#121212] border border-[#303030] rounded-full focus-within:ring-1 focus-within:ring-red-500 transition-all min-h-11 py-1 px-3 gap-2">
                   {facets.map((f, i) => (
-                    <div key={`${f.type}-${i}`} className="flex items-center gap-1.5 bg-[#272727] border border-[#444444] text-[#aaaaaa] rounded-full px-3 py-0.5 animate-in zoom-in-95 duration-200 shadow-sm shrink-0 select-none">
-                      {getFacetIcon(f.type)}
-                      <span className="text-[11px] font-bold uppercase tracking-wider">{f.type.replace(/_/g, ' ')}</span>
+                    <div key={`${f.type}-${i}`} className="relative flex items-center gap-1.5 bg-[#272727] border border-[#444444] text-[#aaaaaa] rounded-full px-3 py-0.5 animate-in zoom-in-95 duration-200 shrink-0 select-none facet-menu-container">
+                      <button
+                        type="button"
+                        onClick={() => setFacetMenuIndex(facetMenuIndex === i ? null : i)}
+                        className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer group"
+                      >
+                        {getFacetIcon(f.type)}
+                        <span className="text-[11px] font-bold uppercase tracking-wider group-hover:underline decoration-dotted transition-all underline-offset-2">{f.type.replace(/_/g, ' ')}</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => removeFacet(i)}
@@ -323,6 +408,30 @@ function App() {
                       >
                         <X className="w-3 h-3" />
                       </button>
+
+                      {facetMenuIndex === i && (
+                        <div className="absolute top-full left-0 mt-2 w-48 bg-[#1a1a1a] border border-[#333] rounded-xl overflow-hidden z-[100] animate-in fade-in slide-in-from-top-1 duration-200">
+                          <div className="p-2 border-b border-[#333] bg-[#222]">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-2">Change Filter</span>
+                          </div>
+                          <div className="max-h-60 overflow-y-auto">
+                            {availableFacets.map((af) => (
+                              <button
+                                key={af.type}
+                                type="button"
+                                onClick={() => handleFacetChange(i, af.type)}
+                                className={`w-full text-left px-3 py-2 text-[11px] font-semibold transition-colors flex items-center justify-between group ${f.type === af.type ? 'text-red-500 bg-red-400/5 cursor-default' : 'text-gray-400 hover:text-white hover:bg-[#2a2a2a] cursor-pointer'}`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  {getFacetIcon(af.type)}
+                                  {af.label}
+                                </div>
+                                {f.type === af.type && <div className="w-1.5 h-1.5 rounded-full bg-red-500" />}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                   <input
@@ -331,12 +440,12 @@ function App() {
                     value={searchQuery}
                     onChange={(e) => handleInput(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder={searchQuery || facets.length > 0 ? "" : "Search your library"}
+                    placeholder={searchQuery || facets.length > 0 ? "" : "Look up Videos and Transcripts"}
                     className="flex-1 min-w-[120px] bg-transparent text-white px-2 focus:outline-none placeholder-gray-500 text-[16px] h-full"
                   />
                     <div className="group/hint relative flex items-center pr-1">
                     <Lightbulb className="w-4 h-4 text-gray-500 hover:text-yellow-400 transition-colors cursor-help" />
-                    <div className="absolute top-full right-0 mt-3 w-72 bg-[#1a1a1a] border border-[#333] rounded-xl p-4 shadow-2xl opacity-0 translate-y-2 pointer-events-none group-hover/hint:opacity-100 group-hover/hint:translate-y-0 transition-all duration-200 z-50">
+                    <div className="absolute top-full right-0 mt-3 w-72 bg-[#1a1a1a] border border-[#333] rounded-xl p-4 opacity-0 translate-y-2 pointer-events-none group-hover/hint:opacity-100 group-hover/hint:translate-y-0 transition-all duration-200 z-50">
                       <h4 className="text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-3 border-b border-[#333] pb-2">Filter Tips</h4>
                       <div className="space-y-2 text-[11px]">
                         <code className="bg-black/40 px-2 py-1 rounded text-white block">
@@ -350,6 +459,9 @@ function App() {
                         </code>
                         <code className="bg-black/40 px-2 py-1 rounded text-white block">
                           video: <span className="text-gray-500">{'>'} / ID / URL</span>
+                        </code>
+                        <code className="bg-black/40 px-2 py-1 rounded text-white block">
+                          tag_search: <span className="text-gray-500"># / Tags</span>
                         </code>
                       </div>
                     </div>
@@ -369,17 +481,39 @@ function App() {
             </span>
           </div>
 
-          <div className="flex items-center bg-[#1a1a1a] p-1 rounded-xl border border-[#272727] gap-1 shadow-inner">
+          <div className="flex items-center bg-[#1a1a1a] p-1 rounded-xl border border-[#272727] gap-1">
             <button
-              onClick={() => setSummaryFilter(summaryFilter === 'all' ? 'with_summaries' : 'all')}
+              onClick={() => setSummaryFilter('all')}
               className={`px-3 py-1.5 rounded-lg text-[13px] font-bold transition-all cursor-pointer flex items-center gap-2 ${
-                summaryFilter === 'with_summaries' 
-                  ? 'bg-white text-black shadow-lg scale-[1.02]' 
+                summaryFilter === 'all' 
+                  ? 'bg-white text-black scale-[1.02]' 
                   : 'text-[#888888] hover:text-white hover:bg-white/5'
               }`}
             >
               <Video className="w-3.5 h-3.5" />
-              {summaryFilter === 'all' ? 'All Videos' : 'With AI Summaries'}
+              All Videos
+            </button>
+            <button
+              onClick={() => setSummaryFilter('transcript_only')}
+              className={`px-3 py-1.5 rounded-lg text-[13px] font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                summaryFilter === 'transcript_only' 
+                  ? 'bg-white text-black scale-[1.02]' 
+                  : 'text-[#888888] hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Transcript Only
+            </button>
+            <button
+              onClick={() => setSummaryFilter('with_summaries')}
+              className={`px-3 py-1.5 rounded-lg text-[13px] font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                summaryFilter === 'with_summaries' 
+                  ? 'bg-white text-black scale-[1.02]' 
+                  : 'text-[#888888] hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              Transcript & AI Summary
             </button>
           </div>
         </div>
@@ -414,15 +548,12 @@ function App() {
                     src={video.thumbnail}
                     alt={video.title}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                    loading="lazy"
+                    decoding="async"
                     onError={(e) => {
                       (e.target as HTMLImageElement).src = "https://via.placeholder.com/320x180?text=No+Thumbnail";
                     }}
                   />
-                  {video.length_seconds && (
-                    <span className="absolute bottom-2 right-2 bg-black text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
-                      {formatDuration(video.length_seconds)}
-                    </span>
-                  )}
                 </div>
                 <div className="flex flex-col flex-1 overflow-hidden">
                   <h3 className={`font-bold text-white line-clamp-2 leading-tight group-hover:text-white ${videoListMode === 'compact' ? 'text-xs' : 'text-sm'}`}>
@@ -448,13 +579,33 @@ function App() {
                   </div>
                   <div className="flex items-center gap-2 mt-2">
                     {video.transcript && (
-                      <div className="flex items-center gap-1 text-[10px] text-green-500/80 font-bold uppercase transition-colors">
+                      <div 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedVideo(video);
+                          setActiveTab("transcript");
+                          setGeneratedImage(null);
+                          setImagePrompt("");
+                          setSidebarOpen(true);
+                        }}
+                        className="flex items-center gap-1 text-[10px] text-green-500/80 font-bold uppercase transition-colors cursor-pointer hover:underline hover:underline-offset-2"
+                      >
                         <FileText className="w-3 h-3" />
                         Transcript
                       </div>
                     )}
                     {video.summary && (
-                      <div className="flex items-center gap-1 text-[10px] text-purple-500/80 font-bold uppercase transition-colors">
+                      <div 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedVideo(video);
+                          setActiveTab("summary");
+                          setGeneratedImage(null);
+                          setImagePrompt("");
+                          setSidebarOpen(true);
+                        }}
+                        className="flex items-center gap-1 text-[10px] text-purple-500/80 font-bold uppercase transition-colors cursor-pointer hover:underline hover:underline-offset-2"
+                      >
                         <Sparkles className="w-3 h-3" />
                         AI Summary
                       </div>
@@ -482,8 +633,17 @@ function App() {
         onSaveSummary={handleSaveSummary}
         onImageAddedToSummary={() => setActiveTab("summary")}
         onUpdateSummary={handleSaveSummary}
+        onUpdateTranscript={handleUpdateTranscript}
         youtubeUrl={selectedVideo?.youtube_url || undefined}
       />
+
+      <button
+        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        className={`fixed bottom-12 right-6 p-3 bg-green-600 hover:bg-green-500 text-white rounded-full shadow-lg transition-opacity duration-200 cursor-pointer z-40 active:scale-95 ${showScrollTop ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+        title="Back to Top"
+      >
+        <ChevronUp className="w-6 h-6" />
+      </button>
     </div>
   );
 }
