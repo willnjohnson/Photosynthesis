@@ -1,5 +1,8 @@
 # [DEPRECATED] Photosynthesis
 
+<img src="public/photosynthesis.png" alt="icon" width="128"/>
+
+> [!CAUTION]
 > This project is no longer maintained.  
 > **Photosynthesis has been migrated into a plugin for Genesis/Kinesis.**
 
@@ -34,8 +37,8 @@ Reasons for deprecation:
 
 - Parsing transcripts into structured data  
 - Generating images from text  
-- Applying reusable templates  
-- Automating multi-image generation  
+- Support for Venice and Pixabay
+- Markdown Editor
 
 Example use case:
 > Input: YouTube transcript  
